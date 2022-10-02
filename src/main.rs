@@ -102,7 +102,7 @@ fn main() {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(1),
+                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Uniform>() as wgpu::BufferAddress),
                 },
             }],
         });
