@@ -36,7 +36,25 @@ struct DrawIndirect {
 }
 
 fn generate_mesh() -> (Object, Vec<Vertex>, Vec<u16>) {
-    todo!();
+    (
+        Object {
+            color: [1.0, 0.5, 0.0],
+            pos: [0.0, 0.0, 0.5],
+            transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        },
+        vec![
+            Vertex {
+                pos: [-1.0, 0.0, 0.0],
+            },
+            Vertex {
+                pos: [1.0, 0.0, 0.0],
+            },
+            Vertex {
+                pos: [0.0, 1.0, 0.0],
+            },
+        ],
+        vec![0, 1, 2],
+    )
 }
 
 fn main() {
@@ -102,7 +120,9 @@ fn main() {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Uniform>() as wgpu::BufferAddress),
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<Uniform>() as wgpu::BufferAddress
+                    ),
                 },
             }],
         });
@@ -222,8 +242,93 @@ fn main() {
         contents: bytemuck::cast_slice(&objects),
     });
     
-    // start the event loop
-    event_loop.run(move |event, _, &mut control_flow| {
+    // bind group
+    let uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("uniforms bind group"),
+        layout: &uniform_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniforms_buffer.as_entire_binding(),
+            }
+        ],
+    });
     
+    // config surface
+    let mut surface_config = wgpu::SurfaceConfiguration {
+        width: window.inner_size().width,
+        height: window.inner_size().height,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        present_mode: wgpu::PresentMode::AutoNoVsync,
+    };
+    
+    surface.configure(&device, &surface_config);
+
+    window.request_redraw();
+    
+    // start the event loop
+    event_loop.run(move |event, _, control_flow| {
+        control_flow.set_poll();
+        
+        match event {
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => control_flow.set_exit(),
+            Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
+                surface_config.width = window.inner_size().width;
+                surface_config.height = window.inner_size().height;
+                surface.configure(&device, &surface_config);
+            }
+            Event::RedrawRequested(_) => {
+            
+                // get the surface
+                let texture = surface.get_current_texture().expect("Failed to get texture");
+                let view = texture.texture.create_view(&Default::default());
+                
+                // render
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                
+                // render pass
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("render pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: true,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                });
+                
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &uniforms_bind_group, &[]);
+                pass.set_vertex_buffer(0, vertices_buffer.slice(..));
+                pass.set_vertex_buffer(1, objects_buffer.slice(..));
+                pass.set_index_buffer(indices_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                
+                // draw
+                if multidraw_allowed {
+                    pass.multi_draw_indexed_indirect(&indirect_draw_buf, 0, 1024);
+                } else {
+                    for i in 0..1024 {
+                        pass.draw_indexed_indirect(&indirect_draw_buf, i * std::mem::size_of::<DrawIndirect>() as u64);
+                    }
+                }
+                
+                // stop
+                std::mem::drop(pass);
+                
+                // submit
+                queue.submit(Some(encoder.finish()));
+                
+                // present
+                texture.present();
+                
+                // and again
+                window.request_redraw();
+            }
+            _ => (),
+        }
     });
 }
